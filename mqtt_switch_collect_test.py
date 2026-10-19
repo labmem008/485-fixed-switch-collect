@@ -1,6 +1,9 @@
 
+import json
 import socket
 import struct
+import time
+from datetime import datetime, timedelta, timezone
 
 HOST = "192.168.14.11"
 PORT = 1883
@@ -13,6 +16,23 @@ SUBSCRIBE_WAIT = 2
 
 # accept 的轮询超时（秒），用于让 Ctrl+C 能及时打断阻塞等待
 ACCEPT_TIMEOUT = 1
+
+# 客户端连接的轮询超时（秒），保证 Ctrl+C 能及时打断 recv
+POLL_TIMEOUT = 1
+
+# 等待终端 commandResponse 的超时时间（秒）
+COMMAND_WAIT_TIMEOUT = 60
+
+# 档案删除 / 档案下发命令的 mid
+MID_ACQ_FILES_DELETE = 1016102
+MID_ACQ_FILES_ADD = 1016103
+
+# 记录 topo/add 应答中生成的 deviceId，供 topo/update 应答使用
+LAST_DEVICE_ID = "1234TERMAI0000900000000001810100000000AB74"
+
+
+class BrokerShutdown(Exception):
+    """需要主动结束整个程序时抛出。"""
 
 
 def recv_exact(sock, length):
@@ -139,13 +159,178 @@ def send_packet(sock, header, payload):
     sock.sendall(packet)
 
 
+def encode_string(value):
+    """编码 MQTT UTF-8 字符串。"""
+    data = value.encode("utf-8")
+    return struct.pack("!H", len(data)) + data
+
+
+def parse_publish(header, payload):
+    """解析 PUBLISH 报文，返回 (topic, qos, packet_id, message)。"""
+    qos = (header >> 1) & 0x03
+    pos = 0
+
+    topic, pos = read_string(payload, pos)
+
+    packet_id = None
+    if qos > 0:
+        packet_id = payload[pos:pos + 2]
+        pos += 2
+
+    return topic, qos, packet_id, payload[pos:]
+
+
+def publish_json(conn, topic, obj):
+    """以 QoS 0 的 PUBLISH 报文发送 JSON 消息。"""
+    body = json.dumps(obj, ensure_ascii=False)
+    payload = encode_string(topic) + body.encode("utf-8")
+    send_packet(conn, 0x30, payload)
+    print(f"\n已回复消息，主题：{topic}")
+    print(body)
+
+
+def build_device_id(info):
+    """按拼接规则生成 deviceId：manufacturerId + model + nodeId。"""
+    return (
+        str(info.get("manufacturerId", ""))
+        + str(info.get("model", ""))
+        + str(info.get("nodeId", ""))
+    )
+
+
+def handle_topo_add(conn, device_key, msg):
+    """处理 /v1/devices/{id}/topo/add，回复第一个设备的 addResponse。"""
+    device_infos = msg.get("deviceInfos")
+
+    if not device_infos or not isinstance(device_infos, list):
+        print("topo/add 消息中没有 deviceInfos，忽略")
+        return
+
+    info = device_infos[0]
+    device_id = build_device_id(info)
+
+    global LAST_DEVICE_ID
+    LAST_DEVICE_ID = device_id
+
+    response = {
+        "statusDesc": "Success!",
+        "data": [
+            {
+                "statusDesc": "success",
+                "deviceInfo": {
+                    "name": info.get("name", ""),
+                    "manufacturerId": info.get("manufacturerId", ""),
+                    "description": info.get("description", ""),
+                    "model": info.get("model", ""),
+                    "deviceId": device_id,
+                    "nodeId": info.get("nodeId", ""),
+                },
+                "statusCode": 0,
+            }
+        ],
+        "mid": str(msg.get("mid", "")),
+        "statusCode": 0,
+    }
+
+    publish_json(
+        conn,
+        f"/v1/devices/{device_key}/topo/addResponse",
+        response
+    )
+    print("继续等待消息……")
+
+
+def handle_topo_update(conn, device_key, msg):
+    """处理 /v1/devices/{id}/topo/update，回复 updateResponse 后退出程序。"""
+    device_id = LAST_DEVICE_ID
+
+    devices = msg.get("devices")
+    if (
+        isinstance(devices, list)
+        and devices
+        and isinstance(devices[0], dict)
+        and devices[0].get("deviceId")
+    ):
+        device_id = devices[0]["deviceId"]
+
+    response = {
+        "mid": "4000",
+        "statusDesc": "Success!",
+        "statusCode": 0,
+        "data": [
+            {
+                "statusDesc": "success",
+                "deviceId": device_id,
+                "statusCode": 0,
+            }
+        ],
+    }
+
+    publish_json(
+        conn,
+        f"/v1/devices/{device_key}/topo/updateResponse",
+        response
+    )
+
+    raise BrokerShutdown("已回复 topo/updateResponse，程序退出")
+
+
+def handle_publish(conn, topic, message):
+    """根据主题分发收到的 PUBLISH 消息。"""
+    print(f"\n收到消息，主题：{topic}")
+
+    try:
+        text = message.decode("utf-8")
+        print(text)
+        msg = json.loads(text)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(f"消息不是合法的 JSON，忽略：{exc}")
+        return
+
+    # 主题格式：/v1/devices/{deviceKey}/topo/{action}
+    parts = topic.strip("/").split("/")
+
+    if (
+        len(parts) < 5
+        or parts[0] != "v1"
+        or parts[1] != "devices"
+        or parts[3] != "topo"
+    ):
+        return
+
+    device_key = parts[2]
+    action = parts[4]
+
+    if action == "add":
+        handle_topo_add(conn, device_key, msg)
+    elif action == "update":
+        handle_topo_update(conn, device_key, msg)
+
+
+def print_subscriptions(client_id, subscriptions):
+    """打印终端的订阅信息。"""
+    print("\n========== 终端订阅信息 ==========")
+    print(f"Client ID：{client_id}")
+    print(f"用户名：{USERNAME}")
+    print("订阅主题：")
+
+    for index, topic in enumerate(
+        dict.fromkeys(subscriptions), 1
+    ):
+        print(f"  {index}. {topic}")
+
+    print("==================================")
+
+
 def handle_client(conn, addr):
     client_id = None
     subscriptions = []
     subscribed = False
+    subscriptions_printed = False
+    idle_timeouts = 0
 
     try:
-        conn.settimeout(None)
+        conn.settimeout(POLL_TIMEOUT)
 
         # 等待 CONNECT
         header, payload = recv_packet(conn)
@@ -173,14 +358,39 @@ def handle_client(conn, addr):
         while True:
             try:
                 header, payload = recv_packet(conn)
+                idle_timeouts = 0
             except socket.timeout:
-                if subscribed:
-                    break
-                raise
+                # 首次订阅后等待 SUBSCRIBE_WAIT 秒，
+                # 没有新订阅就打印订阅列表，然后继续等待消息
+                if subscribed and not subscriptions_printed:
+                    idle_timeouts += 1
+
+                    if idle_timeouts * POLL_TIMEOUT >= SUBSCRIBE_WAIT:
+                        print_subscriptions(client_id, subscriptions)
+                        subscriptions_printed = True
+                        print("等待终端消息……（Ctrl+C 退出）")
+
+                continue
 
             packet_type = header >> 4
 
-            if packet_type == 8:  # SUBSCRIBE
+            if packet_type == 3:  # PUBLISH
+                topic, qos, pub_id, message = parse_publish(
+                    header, payload
+                )
+
+                if qos == 1 and pub_id is not None:
+                    send_packet(conn, 0x40, pub_id)  # PUBACK
+                elif qos == 2 and pub_id is not None:
+                    send_packet(conn, 0x50, pub_id)  # PUBREC
+
+                handle_publish(conn, topic, message)
+
+            elif packet_type == 6:  # PUBREL
+                pub_id = payload[:2]
+                send_packet(conn, 0x70, pub_id)  # PUBCOMP
+
+            elif packet_type == 8:  # SUBSCRIBE
                 if len(payload) < 2:
                     raise ValueError("SUBSCRIBE 报文过短")
 
@@ -204,8 +414,9 @@ def handle_client(conn, addr):
 
                 subscribed = True
 
-                # 首次订阅后继续等待可能到来的其他订阅
-                conn.settimeout(SUBSCRIBE_WAIT)
+                # 收到新订阅后重新计时，等待可能到来的其他订阅
+                idle_timeouts = 0
+                subscriptions_printed = False
 
             elif packet_type == 12:  # PINGREQ
                 send_packet(conn, 0xD0, b"")
@@ -213,19 +424,9 @@ def handle_client(conn, addr):
             elif packet_type == 14:  # DISCONNECT
                 break
 
-        if subscribed:
-            print("\n========== 终端订阅信息 ==========")
-            print(f"Client ID：{client_id}")
-            print(f"用户名：{USERNAME}")
-            print("订阅主题：")
-
-            for index, topic in enumerate(
-                dict.fromkeys(subscriptions), 1
-            ):
-                print(f"  {index}. {topic}")
-
-            print("==================================")
-        else:
+        if subscribed and not subscriptions_printed:
+            print_subscriptions(client_id, subscriptions)
+        elif not subscribed:
             print("客户端已连接，但未订阅任何主题")
 
     except KeyboardInterrupt:
@@ -260,11 +461,13 @@ def main():
                 except socket.timeout:
                     continue
 
-                handle_client(conn, addr)
-
-                # 处理完一个客户端后退出程序
-                print("监测结束，程序退出")
-                break
+                try:
+                    handle_client(conn, addr)
+                except BrokerShutdown as exc:
+                    # 已回复 topo/updateResponse，退出程序
+                    print(f"\n{exc}")
+                    print("监测结束，程序退出")
+                    break
 
     except KeyboardInterrupt:
         print("\n收到 Ctrl+C，正在关闭监听……")

@@ -129,27 +129,32 @@
       ]
    }
 }
+
+
+
+在broker发送完updateResponse后，继续发送以下两个报文：
+
 档案删除
-[10-16 10:32:29.331] [sent]	/v1/devices/810100000000AB74/command
-[10-16 10:32:29.334] [档案删除]810100000000AB74
+[10-16 10:32:29.331] [sent]	/v1/devices/【client id】/command  
+[10-16 10:32:29.334] [档案删除]【client id】
 {
   "msgType": "cloudReq",
   "mid": 1016102,
   "cmd": "acqFilesDelete",
   "serviceId": "command",
-  "deviceId": "1234TERMAI0000900000000001810100000000AB74",
+  "deviceId": 【这里填写deviceId】,
   "expire": 120,
   "eventTime": "2026-10-16T10:32:29.331+0800",
   "app": "SwitchCollect",
   "paras": {}
 }
 确认收到响应：
-[10-16 10:32:29.960] [RecTopic]	/v1/devices/810100000000AB74/commandResponse
+[10-16 10:32:29.960] [RecTopic]	/v1/devices/【client id】/commandResponse
 [10-16 10:32:29.964] [RecPaylod]	
 {
    "msgType" : "deviceRsp",
    "mid"     : 1016102,
-   "deviceId" : "1234TERMAI0000900000000001810100000000AB74",
+   "deviceId" : ...,
    "cmd"      : "acqFilesDelete",
    "serviceId" : "command",
    "eventTime" : "2026-10-16T10:32:13.758+0800",
@@ -158,14 +163,14 @@
    }
 }
 档案下发
-[10-16 10:34:27.483] [sent]	/v1/devices/810100000000AB74/command
+[10-16 10:34:27.483] [sent]	/v1/devices/【client id】/command
 [10-16 10:34:27.485] [档案下发]	
 {
    "msgType" : "cloudReq",
    "mid"     : 1016103,
    "cmd"     : "acqFilesAdd",
    "serviceId" : "command",
-   "deviceId"  : "1234TERMAI0000900000000001810100000000AB74",
+   "deviceId"  : 【这里填写deviceId】,
    "expire"    : 120,
    "eventTime" : "2026-10-16T10:34:27.473+0800",
    "app"       : "SwitchCollect",
@@ -239,12 +244,12 @@
    }
 }
 确认收到响应：
-[10-16 10:34:28.027] [rec]	/v1/devices/810100000000AB74/commandResponse
+[10-16 10:34:28.027] [rec]	/v1/devices/【client id】/commandResponse
 [10-16 10:34:28.031] [档案下发响应]	
 {
    "msgType" : "deviceRsp",
    "mid"     : 1016103,
-   "deviceId" : "1234TERMAI0000900000000001810100000000AB74",
+   "deviceId" : ...,
    "cmd"      : "acqFilesAdd",
    "serviceId" : "command",
    "eventTime" : "2026-10-16T10:34:11.938+0800",
