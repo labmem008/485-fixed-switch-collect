@@ -1,0 +1,254 @@
+档案查询
+[10-16 10:31:10.640] [sent]	/v1/devices/810100000000AB74/command
+[10-16 10:31:10.641] [档案查询]	
+{
+   "msgType" : "cloudReq",
+   "mid"     : 1016101,
+   "cmd"     : "acqFilesReq",
+   "serviceId" : "command",
+   "deviceId"  : "1234TERMAI0000900000000001810100000000AB74",
+   "expire"    : 120,
+   "eventTime" : "2026-10-16T10:31:10.637+0800",
+   "app"       : "SwitchCollect",
+   "paras"     : {
+      "acqFilesReq" : "1"
+   }
+}
+[10-16 10:31:10.938] [rec]	/v1/devices/810100000000AB74/commandResponse
+[10-16 10:31:10.939] [档案查询响应]	
+{
+   "msgType" : "deviceRsp",
+   "mid"     : 1016101,
+   "deviceId" : "1234TERMAI0000900000000001810100000000AB74",
+   "cmd"      : "acqFilesReq",
+   "serviceId" : "command",
+   "eventTime" : "2026-10-16T10:30:55.082+0800",
+   "errcode"   : 0,
+   "body"      : {
+      "acqInfos" : [
+         {
+            "portInfo" : {
+               "channelType" : "COM",
+               "port"        : "RS485-1",
+               "baud"        : 9600,
+               "check"       : "even",
+               "databit"     : 8,
+               "stopbit"     : 1
+            },
+            "devInfo"  : [
+               {
+                  "address" : "202508150001",
+                  "protocol" : "DLT645"
+               }
+            ]
+         },
+         {
+            "portInfo" : {
+               "channelType" : "COM",
+               "port"        : "RS485-2",
+               "baud"        : 9600,
+               "check"       : "even",
+               "databit"     : 8,
+               "stopbit"     : 1
+            },
+            "devInfo"  : [
+               {
+                  "address" : "202508150002",
+                  "protocol" : "DLT645"
+               }
+            ]
+         },
+         {
+            "portInfo" : {
+               "channelType" : "COM",
+               "port"        : "RS485-3",
+               "baud"        : 9600,
+               "check"       : "even",
+               "databit"     : 8,
+               "stopbit"     : 1
+            },
+            "devInfo"  : [
+               {
+                  "address" : "202508150003",
+                  "protocol" : "DLT645"
+               }
+            ]
+         },
+         {
+            "portInfo" : {
+               "channelType" : "COM",
+               "port"        : "RS485-4",
+               "baud"        : 9600,
+               "check"       : "even",
+               "databit"     : 8,
+               "stopbit"     : 1
+            },
+            "devInfo"  : [
+               {
+                  "address" : "202508150004",
+                  "protocol" : "DLT645"
+               }
+            ]
+         },
+         {
+            "portInfo" : {
+               "channelType" : "HPLC",
+               "port"        : "HPLC",
+               "baud"        : 9600,
+               "check"       : "even",
+               "databit"     : 8,
+               "stopbit"     : 1
+            },
+            "devInfo"  : [
+               {
+                  "address" : "202507115166",
+                  "protocol" : "DLT645"
+               },
+               {
+                  "address" : "002507115151",
+                  "protocol" : "DLT645"
+               },
+               {
+                  "address" : "002507115152",
+                  "protocol" : "DLT645"
+               },
+               {
+                  "address" : "002507115153",
+                  "protocol" : "DLT645"
+               },
+               {
+                  "address" : "002507115154",
+                  "protocol" : "DLT645"
+               },
+               {
+                  "address" : "002507115158",
+                  "protocol" : "DLT645"
+               }
+            ]
+         }
+      ]
+   }
+}
+档案删除
+[10-16 10:32:29.331] [sent]	/v1/devices/810100000000AB74/command
+[10-16 10:32:29.334] [档案删除]810100000000AB74
+{
+  "msgType": "cloudReq",
+  "mid": 1016102,
+  "cmd": "acqFilesDelete",
+  "serviceId": "command",
+  "deviceId": "1234TERMAI0000900000000001810100000000AB74",
+  "expire": 120,
+  "eventTime": "2026-10-16T10:32:29.331+0800",
+  "app": "SwitchCollect",
+  "paras": {}
+}
+确认收到响应：
+[10-16 10:32:29.960] [RecTopic]	/v1/devices/810100000000AB74/commandResponse
+[10-16 10:32:29.964] [RecPaylod]	
+{
+   "msgType" : "deviceRsp",
+   "mid"     : 1016102,
+   "deviceId" : "1234TERMAI0000900000000001810100000000AB74",
+   "cmd"      : "acqFilesDelete",
+   "serviceId" : "command",
+   "eventTime" : "2026-10-16T10:32:13.758+0800",
+   "errcode"   : 0,
+   "body"      : {
+   }
+}
+档案下发
+[10-16 10:34:27.483] [sent]	/v1/devices/810100000000AB74/command
+[10-16 10:34:27.485] [档案下发]	
+{
+   "msgType" : "cloudReq",
+   "mid"     : 1016103,
+   "cmd"     : "acqFilesAdd",
+   "serviceId" : "command",
+   "deviceId"  : "1234TERMAI0000900000000001810100000000AB74",
+   "expire"    : 120,
+   "eventTime" : "2026-10-16T10:34:27.473+0800",
+   "app"       : "SwitchCollect",
+   "paras"     : {
+      "acqInfos" : [
+         {
+            "portInfo" : {
+               "channelType" : "COM",
+               "port"        : "RS485-1",
+               "baud"        : 9600,
+               "check"       : "even",
+               "databit"     : 8,
+               "stopbit"     : 1
+            },
+            "devInfo"  : [
+               {
+                  "address" : "202108316022",
+                  "protocol" : "DLT645"
+               }
+            ]
+         },
+         {
+            "portInfo" : {
+               "channelType" : "COM",
+               "port"        : "RS485-2",
+               "baud"        : 9600,
+               "check"       : "even",
+               "databit"     : 8,
+               "stopbit"     : 1
+            },
+            "devInfo"  : [
+               {
+                  "address" : "110000000116",
+                  "protocol" : "DLT645"
+               }
+            ]
+         },
+         {
+            "portInfo" : {
+               "channelType" : "COM",
+               "port"        : "RS485-3",
+               "baud"        : 9600,
+               "check"       : "even",
+               "databit"     : 8,
+               "stopbit"     : 1
+            },
+            "devInfo"  : [
+               {
+                  "address" : "202108316038",
+                  "protocol" : "DLT645"
+               }
+            ]
+         },
+         {
+            "portInfo" : {
+               "channelType" : "COM",
+               "port"        : "RS485-4",
+               "baud"        : 9600,
+               "check"       : "even",
+               "databit"     : 8,
+               "stopbit"     : 1
+            },
+            "devInfo"  : [
+               {
+                  "address" : "110000000142",
+                  "protocol" : "DLT645"
+               }
+            ]
+         }
+      ]
+   }
+}
+确认收到响应：
+[10-16 10:34:28.027] [rec]	/v1/devices/810100000000AB74/commandResponse
+[10-16 10:34:28.031] [档案下发响应]	
+{
+   "msgType" : "deviceRsp",
+   "mid"     : 1016103,
+   "deviceId" : "1234TERMAI0000900000000001810100000000AB74",
+   "cmd"      : "acqFilesAdd",
+   "serviceId" : "command",
+   "eventTime" : "2026-10-16T10:34:11.938+0800",
+   "errcode"   : 0,
+   "body"      : {
+   }
+}

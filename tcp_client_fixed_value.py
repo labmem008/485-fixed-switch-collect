@@ -160,7 +160,7 @@ def wait_for(predicate, desc, timeout=TIMEOUT):
             log(f"匹配成功：{desc}")
             return frame
 
-        log(f"当前报文不属于目标应答，继续等待：{desc}")
+        # log(f"当前报文不属于目标应答，继续等待：{desc}")
 
 
 def exact(hex_string):
