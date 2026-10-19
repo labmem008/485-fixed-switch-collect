@@ -240,8 +240,150 @@ def handle_topo_add(conn, device_key, msg):
     print("继续等待消息……")
 
 
+def now_event_time():
+    """生成 eventTime，格式如 2026-10-16T10:32:29.331+0800。"""
+    now = datetime.now(timezone(timedelta(hours=8)))
+    return (
+        now.strftime("%Y-%m-%dT%H:%M:%S.")
+        + f"{now.microsecond // 1000:03d}+0800"
+    )
+
+
+def build_acq_files_delete(device_id):
+    """构造档案删除命令。"""
+    return {
+        "msgType": "cloudReq",
+        "mid": MID_ACQ_FILES_DELETE,
+        "cmd": "acqFilesDelete",
+        "serviceId": "command",
+        "deviceId": device_id,
+        "expire": 120,
+        "eventTime": now_event_time(),
+        "app": "SwitchCollect",
+        "paras": {},
+    }
+
+
+def build_acq_files_add(device_id):
+    """构造档案下发命令。"""
+    meters = [
+        ("RS485-1", "202108316022"),
+        ("RS485-2", "110000000116"),
+        ("RS485-3", "202108316038"),
+        ("RS485-4", "110000000142"),
+    ]
+
+    acq_infos = [
+        {
+            "portInfo": {
+                "channelType": "COM",
+                "port": port,
+                "baud": 9600,
+                "check": "even",
+                "databit": 8,
+                "stopbit": 1,
+            },
+            "devInfo": [
+                {
+                    "address": address,
+                    "protocol": "DLT645",
+                }
+            ],
+        }
+        for port, address in meters
+    ]
+
+    return {
+        "msgType": "cloudReq",
+        "mid": MID_ACQ_FILES_ADD,
+        "cmd": "acqFilesAdd",
+        "serviceId": "command",
+        "deviceId": device_id,
+        "expire": 120,
+        "eventTime": now_event_time(),
+        "app": "SwitchCollect",
+        "paras": {
+            "acqInfos": acq_infos,
+        },
+    }
+
+
+def wait_for_command_response(conn, expect_mid, label):
+    """等待终端在 /commandResponse 上回复指定 mid 的响应。"""
+    deadline = time.monotonic() + COMMAND_WAIT_TIMEOUT
+
+    while True:
+        try:
+            header, payload = recv_packet(conn)
+        except socket.timeout:
+            if time.monotonic() >= deadline:
+                print(f"等待{label}响应超时（{COMMAND_WAIT_TIMEOUT} 秒）")
+                return False
+            continue
+
+        packet_type = header >> 4
+
+        if packet_type == 12:  # PINGREQ
+            send_packet(conn, 0xD0, b"")
+            continue
+
+        if packet_type == 6:  # PUBREL
+            send_packet(conn, 0x70, payload[:2])  # PUBCOMP
+            continue
+
+        if packet_type == 14:  # DISCONNECT
+            print("客户端已断开，未收到响应")
+            return False
+
+        if packet_type != 3:  # 不是 PUBLISH
+            continue
+
+        topic, qos, pub_id, message = parse_publish(header, payload)
+
+        if qos == 1 and pub_id is not None:
+            send_packet(conn, 0x40, pub_id)  # PUBACK
+        elif qos == 2 and pub_id is not None:
+            send_packet(conn, 0x50, pub_id)  # PUBREC
+
+        print(f"\n收到消息，主题：{topic}")
+
+        try:
+            text = message.decode("utf-8")
+            print(text)
+        except UnicodeDecodeError:
+            continue
+
+        if not topic.endswith("/commandResponse"):
+            continue
+
+        try:
+            msg = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+
+        if msg.get("mid") == expect_mid:
+            print(f"已确认收到{label}响应（mid={expect_mid}）")
+            return True
+
+        print(f"响应 mid 不匹配（期望 {expect_mid}），继续等待……")
+
+
+def run_command_flow(conn, device_key, device_id):
+    """发送档案删除、档案下发命令，并分别等待响应。"""
+    command_topic = f"/v1/devices/{device_key}/command"
+
+    print("\n---------- 档案删除 ----------")
+    publish_json(conn, command_topic, build_acq_files_delete(device_id))
+    wait_for_command_response(conn, MID_ACQ_FILES_DELETE, "档案删除")
+
+    print("\n---------- 档案下发 ----------")
+    publish_json(conn, command_topic, build_acq_files_add(device_id))
+    wait_for_command_response(conn, MID_ACQ_FILES_ADD, "档案下发")
+
+
 def handle_topo_update(conn, device_key, msg):
-    """处理 /v1/devices/{id}/topo/update，回复 updateResponse 后退出程序。"""
+    """处理 /v1/devices/{id}/topo/update，回复 updateResponse，
+    然后下发档案删除、档案下发命令，完成后退出程序。"""
     device_id = LAST_DEVICE_ID
 
     devices = msg.get("devices")
@@ -272,7 +414,10 @@ def handle_topo_update(conn, device_key, msg):
         response
     )
 
-    raise BrokerShutdown("已回复 topo/updateResponse，程序退出")
+    # 发送档案删除、档案下发命令并等待响应
+    run_command_flow(conn, device_key, device_id)
+
+    raise BrokerShutdown("命令流程已完成，程序退出")
 
 
 def handle_publish(conn, topic, message):
