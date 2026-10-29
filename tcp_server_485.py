@@ -6,6 +6,7 @@ TCP Server: 监听 192.168.127.127:9027
       -> 本程序打印请求内容, 并回复应答帧
       -> 等待 1 秒后发送命令帧
       -> 接收并打印终端的返回
+      -> 收到响应后自动安全退出程序
 """
 
 import socket
@@ -19,6 +20,7 @@ SERVER_PORT = 9027                 # 监听端口
 CLIENT_IP = "192.168.127.244"      # 终端(client)IP, 仅用于校验显示
 RECV_BUF_SIZE = 4096               # 接收缓冲区大小
 RECV_TIMEOUT = 30                  # 等待终端数据的超时时间(秒)
+RESPONSE_GRACE_TIMEOUT = 2.0       # 已收到响应但帧不完整时, 等待后续数据的宽限时间(秒)
 
 # 收到终端的预连接请求后, 回复的应答帧 (hex)
 RESPONSE_HEX = ("68 30 00 01 05 17 00 00 00 00 00 00 56 34 81 00 "
@@ -27,12 +29,7 @@ RESPONSE_HEX = ("68 30 00 01 05 17 00 00 00 00 00 00 56 34 81 00 "
                 "FA 72 16")
 
 # 回复应答帧后, 等待 COMMAND_DELAY 秒再发送的命令帧 (hex)
-COMMAND_HEX = ("68 55 00 43 05 17 00 00 00 00 00 09 45 F0 07 01 "
-               "0E 60 00 7F 00 02 04 12 00 02 02 0A 55 07 05 00 "
-               "00 09 41 09 02 16 03 16 02 51 F2 09 02 01 09 01 "
-               "00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 "
-               "07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 "
-               "01 01 00 00 0D 7C 16")
+COMMAND_HEX = ("68 47 02 43 05 17 00 00 00 00 00 09 6C 72 07 01 22 60 00 80 00 01 09 02 04 12 00 02 02 0A 55 07 05 00 00 09 41 09 02 16 03 16 02 51 F2 09 02 01 09 01 00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 01 01 00 02 04 12 00 03 02 0A 55 07 05 00 00 09 41 05 99 16 03 16 02 51 F2 01 02 01 09 01 00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 01 01 00 02 04 12 00 06 02 0A 55 07 05 34 34 48 00 03 22 16 03 16 02 51 F2 01 02 02 09 01 00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 01 01 00 02 04 12 00 07 02 0A 55 07 05 00 00 09 41 06 28 16 03 16 02 51 F2 01 02 03 09 01 00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 01 01 00 02 04 12 00 08 02 0A 55 07 05 16 01 04 46 18 41 16 03 16 02 51 F2 01 02 04 09 01 00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 01 01 00 02 04 12 00 09 02 0A 55 07 05 34 34 48 00 00 61 16 03 16 02 51 F2 09 02 01 09 01 00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 01 01 00 02 04 12 00 0A 02 0A 55 07 05 34 34 48 00 01 18 16 03 16 02 51 F2 09 02 01 09 01 00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 01 01 00 02 04 12 00 0C 02 0A 55 07 05 16 01 04 46 19 40 16 03 16 02 51 F2 09 02 01 09 01 00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 01 01 00 02 04 12 00 0D 02 0A 55 07 05 34 34 53 00 01 77 16 03 16 02 51 F2 09 02 01 09 01 00 11 04 11 01 16 01 12 08 98 12 00 32 02 04 55 07 05 00 00 00 00 00 00 09 01 00 12 00 01 12 00 01 01 00 00 E8 6E 16")
 
 COMMAND_DELAY = 1.0                # 回复应答帧后到发送命令帧的等待时间(秒)
 
@@ -46,21 +43,50 @@ def hex_str(data: bytes) -> str:
     return " ".join(f"{b:02X}" for b in data)
 
 
-def recv_and_print(conn, label=""):
-    """循环接收并打印数据, 直到超时或连接关闭"""
+def is_frame_complete(buf: bytes) -> bool:
+    """判断缓冲区开头是否为一个完整帧: 0x68 起始, 帧总长 = 第2字节 + 2, 结束符 0x16"""
+    if len(buf) < 3 or buf[0] != 0x68:
+        return False
+    total = buf[1] + 2
+    return len(buf) >= total and buf[total - 1] == 0x16
+
+
+def wait_for_response(conn):
+    """等待终端对命令帧的响应, 并尽量收完整。
+
+    返回值:
+      bytes -- 收到的响应数据(完整帧, 或宽限超时前收到的数据)
+      None  -- 终端一直没有响应(超时或直接断开)
+    """
+    buf = b""
+    conn.settimeout(RECV_TIMEOUT)
     while True:
         try:
             data = conn.recv(RECV_BUF_SIZE)
         except socket.timeout:
-            print(f"[{now()}] [INFO] {RECV_TIMEOUT} 秒内无数据, 接收结束。")
-            return False
+            if buf:
+                print(f"[{now()}] [WARN] {RESPONSE_GRACE_TIMEOUT} 秒内无新数据, "
+                      f"以已收到的 {len(buf)} 字节为准退出。")
+                return buf
+            print(f"[{now()}] [ERROR] {RECV_TIMEOUT} 秒内未收到终端响应。")
+            return None
         if not data:
-            print(f"[{now()}] [INFO] 终端关闭了连接。")
-            return False
-        print(f"[{now()}] [RECV]{label} ({len(data)} 字节): {hex_str(data)}")
+            if buf:
+                print(f"[{now()}] [INFO] 终端关闭了连接, 响应已收完。")
+                return buf
+            print(f"[{now()}] [INFO] 终端未响应即关闭连接。")
+            return None
+        buf += data
+        print(f"[{now()}] [RECV] 响应 ({len(data)} 字节): {hex_str(data)}")
+        if is_frame_complete(buf):
+            print(f"[{now()}] [INFO] 收到完整响应帧 (共 {len(buf)} 字节)。")
+            return buf
+        # 帧还不完整(或非 68...16 格式), 用短超时等待剩余部分
+        conn.settimeout(RESPONSE_GRACE_TIMEOUT)
 
 
 def handle_client(conn, addr, response_data, command_data):
+    """处理一次终端连接。收到命令帧的响应返回 True(程序应退出), 否则返回 False。"""
     print(f"[{now()}] [INFO] 终端已连接: {addr[0]}:{addr[1]}")
     if addr[0] != CLIENT_IP:
         print(f"[{now()}] [WARN] 连接的IP不是预期的 {CLIENT_IP}, 仍然继续处理。")
@@ -72,11 +98,15 @@ def handle_client(conn, addr, response_data, command_data):
             request = conn.recv(RECV_BUF_SIZE)
         except socket.timeout:
             print(f"[{now()}] [ERROR] 等待预连接请求超时 ({RECV_TIMEOUT} 秒)。")
-            return
+            return False
         if not request:
             print(f"[{now()}] [INFO] 终端未发数据即关闭连接。")
-            return
+            return False
         print(f"[{now()}] [RECV] 预连接请求 ({len(request)} 字节): {hex_str(request)}")
+
+        # 提取终端地址: 帧的第6个字节开始, 共6字节(小端)
+        terminal_addr = request[5:11]
+        print(f"[{now()}] [INFO] 终端地址(小端): {hex_str(terminal_addr)} -> 正常序: {hex_str(terminal_addr[::-1])}")
 
         # ---- 步骤2: 回复预连接应答帧 ----
         conn.sendall(response_data)
@@ -87,20 +117,24 @@ def handle_client(conn, addr, response_data, command_data):
         conn.sendall(command_data)
         print(f"[{now()}] [SEND] 命令帧 ({len(command_data)} 字节): {hex_str(command_data)}")
 
-        # ---- 步骤4: 接收并打印终端的返回 ----
-        recv_and_print(conn, " 返回")
+        # ---- 步骤4: 等待终端响应, 收到后退出程序 ----
+        return wait_for_response(conn) is not None
     except ConnectionResetError:
         print(f"[{now()}] [ERROR] 连接被终端重置。")
+        return False
+    except OSError as e:
+        print(f"[{now()}] [ERROR] 网络错误: {e}")
+        return False
     finally:
         conn.close()
-        print(f"[{now()}] [INFO] 连接已关闭, 继续等待下一次连接...\n")
+        print(f"[{now()}] [INFO] 本次连接已关闭。")
 
 
 def main():
     response_data = binascii.unhexlify(RESPONSE_HEX.replace(" ", ""))
     command_data = binascii.unhexlify(COMMAND_HEX.replace(" ", ""))
-    print(f"[INFO] 预连接应答帧 ({len(response_data)} 字节): {hex_str(response_data)}")
-    print(f"[INFO] 命令帧 ({len(command_data)} 字节): {hex_str(command_data)}")
+    # print(f"[INFO] 预连接应答帧 ({len(response_data)} 字节): {hex_str(response_data)}")
+    # print(f"[INFO] 命令帧 ({len(command_data)} 字节): {hex_str(command_data)}")
 
     # 创建 TCP socket 并绑定监听
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -116,16 +150,20 @@ def main():
     server.listen(1)
     print(f"[INFO] 服务器已启动, 监听 {SERVER_IP}:{SERVER_PORT}, 等待终端 {CLIENT_IP} 连接...")
     print(f"[INFO] 时序: 终端连接 -> 终端发预连接请求 -> 回复应答帧"
-          f" -> 等{COMMAND_DELAY:g}秒 -> 发命令帧 -> 接收返回\n")
+          f" -> 等{COMMAND_DELAY:g}秒 -> 发命令帧 -> 收到响应 -> 自动退出\n")
 
     try:
         while True:
             conn, addr = server.accept()
-            handle_client(conn, addr, response_data, command_data)
+            if handle_client(conn, addr, response_data, command_data):
+                print(f"[{now()}] [INFO] 已收到终端响应, 任务完成, 程序自动退出。")
+                break
+            print(f"[{now()}] [INFO] 继续等待下一次连接...\n")
     except KeyboardInterrupt:
         print("\n[INFO] 用户中断, 服务器退出。")
     finally:
         server.close()
+        print(f"[{now()}] [INFO] 监听套接字已关闭, 再见。")
 
 
 if __name__ == "__main__":
