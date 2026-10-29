@@ -7,6 +7,7 @@ TCP Server: 监听 192.168.127.127:9027
       -> 等待 1 秒后发送命令帧
       -> 接收并打印终端的返回
       -> 收到响应后自动安全退出程序
+      -> 若终端 10 秒未响应命令帧, 关闭连接并安全退出
 """
 
 import socket
@@ -22,6 +23,7 @@ SERVER_PORT = 9027                 # 监听端口
 CLIENT_IP = "192.168.127.244"      # 终端(client)IP, 仅用于校验显示
 RECV_BUF_SIZE = 4096               # 接收缓冲区大小
 RECV_TIMEOUT = 30                  # 等待终端数据的超时时间(秒)
+COMMAND_RESPONSE_TIMEOUT = 10      # 等待终端响应命令帧的超时时间(秒), 超时则关闭连接并退出
 RESPONSE_GRACE_TIMEOUT = 2.0       # 已收到响应但帧不完整时, 等待后续数据的宽限时间(秒)
 
 # 收到终端的预连接请求后, 回复的应答基础帧 (hex)
@@ -79,7 +81,7 @@ def wait_for_response(conn):
       None  -- 终端一直没有响应(超时或直接断开)
     """
     buf = b""
-    conn.settimeout(RECV_TIMEOUT)
+    conn.settimeout(COMMAND_RESPONSE_TIMEOUT)
     while True:
         try:
             data = conn.recv(RECV_BUF_SIZE)
@@ -88,7 +90,7 @@ def wait_for_response(conn):
                 print(f"[{now()}] [WARN] {RESPONSE_GRACE_TIMEOUT} 秒内无新数据, "
                       f"以已收到的 {len(buf)} 字节为准退出。")
                 return buf
-            print(f"[{now()}] [ERROR] {RECV_TIMEOUT} 秒内未收到终端响应。")
+            print(f"[{now()}] [ERROR] {COMMAND_RESPONSE_TIMEOUT} 秒内未收到终端响应。")
             return None
         if not data:
             if buf:
@@ -141,8 +143,12 @@ def handle_client(conn, addr, response_base, command_base):
         conn.sendall(command_data)
         print(f"[{now()}] [SEND] 命令帧 ({len(command_data)} 字节): {hex_str(command_data)}")
 
-        # ---- 步骤4: 等待终端响应, 收到后退出程序 ----
-        return wait_for_response(conn) is not None
+        # ---- 步骤4: 等待终端响应, 收到后退出程序;
+        #      10秒未响应也关闭连接并退出程序 ----
+        if wait_for_response(conn) is None:
+            print(f"[{now()}] [WARN] 终端 {COMMAND_RESPONSE_TIMEOUT} 秒未响应命令帧, "
+                  f"关闭连接并退出程序。")
+        return True
     except ConnectionResetError:
         print(f"[{now()}] [ERROR] 连接被终端重置。")
         return False
@@ -174,13 +180,15 @@ def main():
     server.listen(1)
     print(f"[INFO] 服务器已启动, 监听 {SERVER_IP}:{SERVER_PORT}, 等待终端 {CLIENT_IP} 连接...")
     print(f"[INFO] 时序: 终端连接 -> 终端发预连接请求 -> 回复应答帧"
-          f" -> 等{COMMAND_DELAY:g}秒 -> 发命令帧 -> 收到响应 -> 自动退出\n")
+          f" -> 等{COMMAND_DELAY:g}秒 -> 发命令帧 -> 收到响应(或{COMMAND_RESPONSE_TIMEOUT}秒未响应)"
+          f" -> 自动退出\n")
 
     try:
         while True:
             conn, addr = server.accept()
             if handle_client(conn, addr, response_base, command_base):
-                print(f"[{now()}] [INFO] 已收到终端响应, 任务完成, 程序自动退出。")
+                print(f"[{now()}] [INFO] 本次交互结束(收到响应或终端超时未响应), "
+                      f"任务完成, 程序自动退出。")
                 break
             print(f"[{now()}] [INFO] 继续等待下一次连接...\n")
     except KeyboardInterrupt:
