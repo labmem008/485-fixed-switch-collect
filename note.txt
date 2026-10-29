@@ -2,3 +2,8 @@
 1. 485表配置
 2. 定值配置
 3. 断路器配置
+其中2和3是插14.101网口（下），1是插127.244网口。
+2和3可顺序运行：
+python mqtt_switch_collect_test.py; if ($?) { python tcp_client_fixed_value.py }
+1单独运行：
+python .\tcp_server_485.py
