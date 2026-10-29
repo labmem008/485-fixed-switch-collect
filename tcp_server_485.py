@@ -14,6 +14,8 @@ import binascii
 import time
 from datetime import datetime
 
+from fcs import calc_fcs
+
 # ===== 配置 =====
 SERVER_IP = "192.168.127.127"      # 本机(server)IP
 SERVER_PORT = 9027                 # 监听端口
@@ -22,7 +24,9 @@ RECV_BUF_SIZE = 4096               # 接收缓冲区大小
 RECV_TIMEOUT = 30                  # 等待终端数据的超时时间(秒)
 RESPONSE_GRACE_TIMEOUT = 2.0       # 已收到响应但帧不完整时, 等待后续数据的宽限时间(秒)
 
-# 收到终端的预连接请求后, 回复的应答帧 (hex)
+# 收到终端的预连接请求后, 回复的应答基础帧 (hex)
+# 发送前会由 build_frame() 按实际终端地址修改地址域(第6字节起6字节),
+# 并重算HCS(第13、14字节)和FCS(倒数第2、3字节)
 RESPONSE_HEX = ("68 30 00 01 05 17 00 00 00 00 00 00 56 34 81 00 "
                 "80 07 EA 0A 0F 04 09 29 29 00 00 07 EA 0A 0F 04 "
                 "09 29 39 00 12 07 EA 0A 0F 04 09 29 39 00 12 "
@@ -41,6 +45,22 @@ def now() -> str:
 def hex_str(data: bytes) -> str:
     """把 bytes 转成空格分隔的大写十六进制字符串, 方便打印"""
     return " ".join(f"{b:02X}" for b in data)
+
+
+def build_frame(base_frame: bytes, terminal_addr: bytes) -> bytes:
+    """根据终端地址修改基础帧: 只改终端地址、HCS和FCS三部分。
+
+    - 终端地址: 帧的第6字节开始, 共6字节(小端), 直接填入 terminal_addr;
+    - HCS: 帧的第13、14字节(frame[12:14]), 算法与FCS相同,
+      对第2个字节开始的11字节帧头(frame[1:12])计算;
+    - FCS: 倒数第2、3字节, 用 fcs.calc_fcs 对 frame[1:-3]
+      (除起始符68、FCS本身、结束符16外的所有字节) 重新计算。
+    """
+    frame = bytearray(base_frame)
+    frame[5:11] = terminal_addr
+    frame[12:14] = calc_fcs(bytes(frame[1:12]))   # HCS: 帧头11字节
+    frame[-3:-1] = calc_fcs(bytes(frame[1:-3]))   # FCS: 整帧(除68/FCS/16)
+    return bytes(frame)
 
 
 def is_frame_complete(buf: bytes) -> bool:
@@ -85,7 +105,7 @@ def wait_for_response(conn):
         conn.settimeout(RESPONSE_GRACE_TIMEOUT)
 
 
-def handle_client(conn, addr, response_data, command_data):
+def handle_client(conn, addr, response_base, command_base):
     """处理一次终端连接。收到命令帧的响应返回 True(程序应退出), 否则返回 False。"""
     print(f"[{now()}] [INFO] 终端已连接: {addr[0]}:{addr[1]}")
     if addr[0] != CLIENT_IP:
@@ -107,6 +127,10 @@ def handle_client(conn, addr, response_data, command_data):
         # 提取终端地址: 帧的第6个字节开始, 共6字节(小端)
         terminal_addr = request[5:11]
         print(f"[{now()}] [INFO] 终端地址(小端): {hex_str(terminal_addr)} -> 正常序: {hex_str(terminal_addr[::-1])}")
+
+        # 根据终端地址修改基础帧(仅终端地址 + FCS 两部分)
+        response_data = build_frame(response_base, terminal_addr)
+        command_data = build_frame(command_base, terminal_addr)
 
         # ---- 步骤2: 回复预连接应答帧 ----
         conn.sendall(response_data)
@@ -131,8 +155,8 @@ def handle_client(conn, addr, response_data, command_data):
 
 
 def main():
-    response_data = binascii.unhexlify(RESPONSE_HEX.replace(" ", ""))
-    command_data = binascii.unhexlify(COMMAND_HEX.replace(" ", ""))
+    response_base = binascii.unhexlify(RESPONSE_HEX.replace(" ", ""))
+    command_base = binascii.unhexlify(COMMAND_HEX.replace(" ", ""))
     # print(f"[INFO] 预连接应答帧 ({len(response_data)} 字节): {hex_str(response_data)}")
     # print(f"[INFO] 命令帧 ({len(command_data)} 字节): {hex_str(command_data)}")
 
@@ -155,7 +179,7 @@ def main():
     try:
         while True:
             conn, addr = server.accept()
-            if handle_client(conn, addr, response_data, command_data):
+            if handle_client(conn, addr, response_base, command_base):
                 print(f"[{now()}] [INFO] 已收到终端响应, 任务完成, 程序自动退出。")
                 break
             print(f"[{now()}] [INFO] 继续等待下一次连接...\n")
